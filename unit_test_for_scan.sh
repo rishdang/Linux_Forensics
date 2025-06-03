@@ -2,9 +2,9 @@
 #
 # unit_test_for_scan.sh
 #
-# A unit-test script for linux_forensics_scan.sh.
-# Runs each check command, records exit status and output (if any) to a text file.
-# Skips interactive commands (memory snapshot, disk image, timeline carving).
+# A unit-test script for linux_forensics_scan.sh v0.1 checks.
+# Runs each check command, records status and details to a text file.
+# Detects missing utilities (including diff in composite commands).
 # Created by Rishabh Dangwal
 #
 # Usage:
@@ -12,7 +12,7 @@
 #   ./unit_test_for_scan.sh
 #
 # Output:
-#   unit_test_results.txt – one section per check with status and brief details.
+#   unit_test_results.txt – one section per check with status and details.
 
 OUTPUT="unit_test_results.txt"
 : > "$OUTPUT"
@@ -31,35 +31,46 @@ run_cmd() {
   SECTION="$1"
   CMD="$2"
 
-  # Determine primary utility
-  UTIL=$(echo "$CMD" | awk '{print $1}')
+  # For composite commands involving diff, check diff utility first
+  if echo "$CMD" | grep -q "diff"; then
+    if ! command -v diff >/dev/null 2>&1; then
+      log_result "$SECTION" "NO" "Utility 'diff' not present"
+      return
+    fi
+  fi
+
+  # Determine primary utility (first token across all lines)
+  UTIL="$(printf "%s" "$CMD" | tr '\n' ' ' | sed -e 's/^[[:space:]]*//' | cut -d ' ' -f1)"
   if ! command -v "$UTIL" >/dev/null 2>&1; then
     log_result "$SECTION" "NO" "Utility '$UTIL' not present"
     return
   fi
 
   # Run the command, capture output and exit code
-  OUTPUT_TMP=$(mktemp)
-  sh -c "$CMD" > "$OUTPUT_TMP" 2>&1
+  TMP_OUT=$(mktemp)
+  sh -c "$CMD" > "$TMP_OUT" 2>&1
   RC=$?
 
   if [ $RC -ne 0 ]; then
-    # Non-zero exit: permission denied or other error
-    if grep -q "Permission denied" "$OUTPUT_TMP"; then
+    # Non-zero exit: check for permission denied or command not found in output
+    if grep -qi "Permission denied" "$TMP_OUT"; then
       log_result "$SECTION" "NO" "Permission denied"
+    elif grep -qi "not found" "$TMP_OUT"; then
+      MISSING_UTIL=$(grep -i "not found" "$TMP_OUT" | head -n1 | awk '{print $1}')
+      log_result "$SECTION" "NO" "Utility '$MISSING_UTIL' not present"
     else
       log_result "$SECTION" "NO" "Exit code $RC"
     fi
   else
     # Succeeded; check if there was any meaningful output
-    if [ -s "$OUTPUT_TMP" ]; then
-      log_result "$SECTION" "OK" "Output length: $(wc -c < "$OUTPUT_TMP") bytes"
+    if [ -s "$TMP_OUT" ]; then
+      log_result "$SECTION" "OK" "Output length: $(wc -c < "$TMP_OUT") bytes"
     else
-      log_result "$SECTION" "OK" "No output (but command succeeded)"
+      log_result "$SECTION" "OK" "No output (command succeeded)"
     fi
   fi
 
-  rm -f "$OUTPUT_TMP"
+  rm -f "$TMP_OUT"
 }
 
 echo "Starting unit tests for linux_forensics_scan.sh checks..."
