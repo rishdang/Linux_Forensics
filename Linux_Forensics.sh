@@ -1,16 +1,17 @@
 #!/bin/sh
 #
-# linux_forensics_scan.sh
+# linux_forensics_scan.sh v0.1
 #
 # Implementation of native checks in SH format. POSIX compliant wherever possible.
 # organize raw outputs and HTML reports by section, and generate a master HTML index.
 # Created by Rishabh Dangwal
 #
-#
 # Usage:
 #   ./linux_forensics_scan.sh --all
-#   ./linux_forensics_scan.sh [kernel | proc | fs | network | users | logs | live | dfir | container | persistence | timeline]
+#   ./linux_forensics_scan.sh [kernel fs proc network users logs live dfir container persistence timeline]
+#   (Multiple sections can be specified in any order.)
 #
+# Version: 0.1
 # Sections:
 #   kernel      : Kernel & Modules
 #   proc        : /proc & Process Artifacts
@@ -23,6 +24,8 @@
 #   container   : Container & VM Indicators
 #   persistence : Persistence & Backdoor Evidence
 #   timeline    : Indicator & Timeline Correlation
+
+echo "linux_forensics_scan.sh version 0.1"
 
 ###############################################################################
 ###  Configuration and Utility Functions
@@ -126,7 +129,8 @@ run_check() {
   echo "<p><code>${CMD}</code></p>" >> "$HTML_FILE"
   echo "<pre>" >> "$HTML_FILE"
 
-  UTIL="$(echo "$CMD" | awk '{print $1}')"
+  # Extract primary utility: first non-whitespace token across all lines
+  UTIL="$(printf "%s" "$CMD" | tr '\n' ' ' | sed -e 's/^[[:space:]]*//' | cut -d ' ' -f1)"
   require_util "$UTIL"
   if [ "$SKIP_UTIL" -eq 1 ]; then
     # Utility missing: record and report
@@ -139,7 +143,7 @@ run_check() {
     sh -c "$CMD" > "$RAW_OUT" 2>&1
     RC=$?
     if [ $RC -ne 0 ]; then
-      # Non-zero exit: capture stderr in HTML and mark failure
+      # Non-zero exit: record stderr and mark failure
       sed 's/&/&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "$RAW_OUT" >> "$HTML_FILE"
       echo "Technique: ${TECHNIQUE} | MITRE ATT&CK TTP: ${TTP}"
       echo "Check performed [NO] : Exit code ${RC}"
@@ -323,7 +327,7 @@ scan_filesystem_integrity() {
 
   # 3.3 Immutable files & directories
   RAW_OUT="${SECTION_DIR}/03_lsattr.txt"
-  run_check "Immutable files & directories" "T1562.003" "lsattr -R / 2>/dev/null | grep 'i'" "$RAW_OUT"
+  run_check "Immutable files & directories" "T1562.003" "lsattr -R / 2>/dev/null | grep ' i '" "$RAW_OUT"
 
   # 3.4 Find SUID/SGID files
   RAW_OUT="${SECTION_DIR}/04_suid_sgid.txt"
@@ -337,7 +341,7 @@ scan_filesystem_integrity() {
   RAW_OUT="${SECTION_DIR}/06_hidden_dirs.txt"
   run_check "Hidden files / Unexpected '.' directories" "T1083" "find / -type d -name '.*' 2>/dev/null" "$RAW_OUT"
 
-  # 3.7 Bind-mount anomalies
+  # 3.7 Bind-mount anomalies & iptables rules
   RAW_OUT="${SECTION_DIR}/07_bind_mounts.txt"
   CMD='iptables -L -v -n 2>/dev/null; iptables -t nat -L -v -n 2>/dev/null; cat /proc/mounts | grep proc; mount | grep -vE "(/etc|/proc|/sys|/dev)"'
   run_check "Bind-mount anomalies & iptables rules" "T1562.003" "$CMD" "$RAW_OUT"
@@ -373,7 +377,7 @@ scan_network_indicators() {
 
   # 4.5 eBPF / XDP programs
   RAW_OUT="${SECTION_DIR}/05_bpftool.txt"
-  CMD='ip link show | grep xdp; bpftool prog list 2>/dev/null; bpftool map list 2>/dev/null'
+  CMD='ip link show | grep xdp 2>/dev/null; bpftool prog list 2>/dev/null; bpftool map list 2>/dev/null'
   run_check "eBPF / XDP programs" "T1215" "$CMD" "$RAW_OUT"
 
   html_footer
@@ -397,7 +401,7 @@ scan_user_accounts() {
   RAW_OUT="${SECTION_DIR}/02_ssh_authorized_keys.txt"
   run_check "Check SSH authorized_keys files" "T1574.002" "find /home -name authorized_keys 2>/dev/null" "$RAW_OUT"
 
-  # 5.3 Inspect /etc/sudoers & /etc/sudoers.d/
+  # 5.3 Inspect /etc/sudoers & /etc/sudoers.d/"
   RAW_OUT="${SECTION_DIR}/03_sudoers.txt"
   CMD='cat /etc/sudoers 2>/dev/null; ls /etc/sudoers.d/ 2>/dev/null'
   run_check "Inspect /etc/sudoers & /etc/sudoers.d/" "T1574.002" "$CMD" "$RAW_OUT"
@@ -712,7 +716,8 @@ EOF
 ###  Argument Parsing & Execution Flow
 ###############################################################################
 usage() {
-  echo "Usage: $0 [--all | kernel | proc | fs | network | users | logs | live | dfir | container | persistence | timeline]"
+  echo "Usage: $0 [--all] [kernel] [proc] [fs] [network] [users] [logs] [live] [dfir] [container] [persistence] [timeline]"
+  echo "Specify multiple sections in any order, or --all for all sections."
   exit 1
 }
 
@@ -720,25 +725,29 @@ if [ $# -lt 1 ]; then
   usage
 fi
 
-case "$1" in
-  --all)
+# Determine sections to run
+SECTIONS=""
+for ARG in "$@"; do
+  if [ "$ARG" = "--all" ]; then
     SECTIONS="$ALL_SECTIONS"
-    ;;
-  kernel)      SECTIONS="kernel" ;;
-  proc)        SECTIONS="proc" ;;
-  fs)          SECTIONS="fs" ;;
-  network)     SECTIONS="network" ;;
-  users)       SECTIONS="users" ;;
-  logs)        SECTIONS="logs" ;;
-  live)        SECTIONS="live" ;;
-  dfir)        SECTIONS="dfir" ;;
-  container)   SECTIONS="container" ;;
-  persistence) SECTIONS="persistence" ;;
-  timeline)    SECTIONS="timeline" ;;
-  *)
+    break
+  fi
+  # Validate argument
+  if echo "$ALL_SECTIONS" | grep -wq "$ARG"; then
+    SECTIONS="$SECTIONS $ARG"
+  else
+    echo "Unknown section: $ARG"
     usage
-    ;;
-esac
+  fi
+done
+
+# Remove leading/trailing whitespace and duplicates
+SECTIONS="$(echo $SECTIONS | tr ' ' '\n' | awk '!x[$0]++' | tr '\n' ' ')"
+
+# If --all was present, we already set SECTIONS
+if echo "$@" | grep -wq -- "--all"; then
+  SECTIONS="$ALL_SECTIONS"
+fi
 
 # Create base directories and system info
 print_system_info
@@ -746,39 +755,17 @@ print_system_info
 # Run requested sections
 for SECTION in $SECTIONS; do
   case "$SECTION" in
-    kernel)
-      scan_kernel_modules
-      ;;
-    proc)
-      scan_proc_artifacts
-      ;;
-    fs)
-      scan_filesystem_integrity
-      ;;
-    network)
-      scan_network_indicators
-      ;;
-    users)
-      scan_user_accounts
-      ;;
-    logs)
-      scan_system_logs
-      ;;
-    live)
-      scan_live_forensics
-      ;;
-    dfir)
-      scan_dfir_tools
-      ;;
-    container)
-      scan_container_vm
-      ;;
-    persistence)
-      scan_persistence
-      ;;
-    timeline)
-      scan_timeline
-      ;;
+    kernel)      scan_kernel_modules ;;
+    proc)        scan_proc_artifacts ;;
+    fs)          scan_filesystem_integrity ;;
+    network)     scan_network_indicators ;;
+    users)       scan_user_accounts ;;
+    logs)        scan_system_logs ;;
+    live)        scan_live_forensics ;;
+    dfir)        scan_dfir_tools ;;
+    container)   scan_container_vm ;;
+    persistence) scan_persistence ;;
+    timeline)    scan_timeline ;;
   esac
 done
 
