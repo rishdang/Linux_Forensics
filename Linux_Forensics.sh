@@ -6,6 +6,7 @@
 # organize raw outputs and HTML reports by section, and generate a master HTML index.
 # Created by Rishabh Dangwal
 #
+#
 # Usage:
 #   ./linux_forensics_scan.sh --all
 #   ./linux_forensics_scan.sh [kernel | proc | fs | network | users | logs | live | dfir | container | persistence | timeline]
@@ -31,6 +32,45 @@
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 ROOT_DIR="forensics_output_${TIMESTAMP}"
 
+# List of all available sections (short names)
+ALL_SECTIONS="kernel proc fs network users logs live dfir container persistence timeline"
+
+# Mapping short names to display titles
+display_title() {
+  case "$1" in
+    kernel)      echo "Kernel & Modules";;
+    proc)        echo "/proc & Process Artifacts";;
+    fs)          echo "Filesystem Integrity & Attributes";;
+    network)     echo "Network Indicators";;
+    users)       echo "User Accounts & Authentication";;
+    logs)        echo "System Logs & Audit Trails";;
+    live)        echo "Live Memory & Disk Forensics";;
+    dfir)        echo "CLI & DFIR Tools";;
+    container)   echo "Container & VM Indicators";;
+    persistence) echo "Persistence & Backdoor Evidence";;
+    timeline)    echo "Indicator & Timeline Correlation";;
+    *)           echo "$1";;
+  esac
+}
+
+# Mapping short names to directory names (with numeric prefix)
+section_dir() {
+  case "$1" in
+    kernel)      echo "01_kernel_modules";;
+    proc)        echo "02_proc_artifacts";;
+    fs)          echo "03_fs_integrity";;
+    network)     echo "04_network_indicators";;
+    users)       echo "05_user_accounts";;
+    logs)        echo "06_system_logs";;
+    live)        echo "07_live_forensics";;
+    dfir)        echo "08_dfir_tools";;
+    container)   echo "09_container_vm";;
+    persistence) echo "10_persistence";;
+    timeline)    echo "11_timeline";;
+    *)           echo "$1";;
+  esac
+}
+
 # HTML template for section headers/footers
 html_header() {
   SECTION_TITLE="$1"
@@ -46,10 +86,12 @@ html_header() {
     code { font-family: monospace; }
     h1 { margin-bottom: 0.5em; }
     h2 { border-bottom: 1px solid #ccc; padding-bottom: 5px; margin-top: 1.5em; }
+    p { margin: 0.5em 0; }
   </style>
 </head>
 <body>
   <h1>${SECTION_TITLE}</h1>
+  <p><a href="../index.html">Back to report index</a></p>
 EOF
 }
 
@@ -67,6 +109,7 @@ require_util() {
     SKIP_UTIL=1
     return 1
   fi
+  SKIP_UTIL=0
   return 0
 }
 
@@ -75,22 +118,37 @@ run_check() {
   TECHNIQUE="$1"
   TTP="$2"
   CMD="$3"
-  RAW_OUT="$4"  # filepath for raw command output
+  RAW_OUT="$4"
 
-  echo "Technique: $TECHNIQUE | TTP: $TTP | Command: $CMD"
+  # Append HTML header for this technique
   echo "<h2>Technique: ${TECHNIQUE}</h2>" >> "$HTML_FILE"
   echo "<p><strong>MITRE ATT&CK TTP:</strong> ${TTP}</p>" >> "$HTML_FILE"
   echo "<p><code>${CMD}</code></p>" >> "$HTML_FILE"
   echo "<pre>" >> "$HTML_FILE"
 
-  SKIP_UTIL=0
   UTIL="$(echo "$CMD" | awk '{print $1}')"
   require_util "$UTIL"
   if [ "$SKIP_UTIL" -eq 1 ]; then
-    echo "Utility ${UTIL} not found. Skipping this check." | tee "$RAW_OUT"
+    # Utility missing: record and report
+    echo "Utility ${UTIL} not found. Skipping this check." > "$RAW_OUT"
+    echo "Utility ${UTIL} not found. Skipping this check." >> "$HTML_FILE"
+    echo "Technique: ${TECHNIQUE} | MITRE ATT&CK TTP: ${TTP}"
+    echo "Check performed [NO] : Utility not present"
   else
+    # Execute the command, capture output
     sh -c "$CMD" > "$RAW_OUT" 2>&1
-    cat "$RAW_OUT"
+    RC=$?
+    if [ $RC -ne 0 ]; then
+      # Non-zero exit: capture stderr in HTML and mark failure
+      sed 's/&/&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "$RAW_OUT" >> "$HTML_FILE"
+      echo "Technique: ${TECHNIQUE} | MITRE ATT&CK TTP: ${TTP}"
+      echo "Check performed [NO] : Exit code ${RC}"
+    else
+      # Command succeeded (exit 0)
+      sed 's/&/&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "$RAW_OUT" >> "$HTML_FILE"
+      echo "Technique: ${TECHNIQUE} | MITRE ATT&CK TTP: ${TTP}"
+      echo "Check performed [OK]"
+    fi
   fi
 
   echo "</pre>" >> "$HTML_FILE"
@@ -101,7 +159,6 @@ run_check() {
 ###############################################################################
 print_system_info() {
   INFO_FILE="${ROOT_DIR}/system_info.txt"
-  HTML_INFO_FILE="${ROOT_DIR}/system_info.html"
 
   mkdir -p "$ROOT_DIR"
   {
@@ -126,27 +183,6 @@ print_system_info() {
       ifconfig 2>/dev/null | grep -E 'inet '
     fi
   } > "$INFO_FILE"
-
-  # Create HTML version of system info
-  cat <<EOF > "$HTML_INFO_FILE"
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>System Information</title>
-  <style>
-    body { font-family: sans-serif; margin: 20px; }
-    pre { background-color: #f4f4f4; padding: 10px; }
-  </style>
-</head>
-<body>
-  <h1>System Information</h1>
-  <pre>
-$(sed 's/&/&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "$INFO_FILE")
-  </pre>
-</body>
-</html>
-EOF
 }
 
 ###############################################################################
@@ -156,7 +192,8 @@ EOF
 # 1. Kernel & Modules
 scan_kernel_modules() {
   SECTION_NAME="Kernel & Modules"
-  SECTION_DIR="${ROOT_DIR}/01_kernel_modules"
+  DIR_NAME="$(section_dir kernel)"
+  SECTION_DIR="${ROOT_DIR}/${DIR_NAME}"
   HTML_FILE="${SECTION_DIR}/index.html"
 
   mkdir -p "${SECTION_DIR}"
@@ -173,8 +210,8 @@ scan_kernel_modules() {
   # 1.3 Compare lsmod vs /sys/module
   RAW_OUT="${SECTION_DIR}/03_compare_lsmod_sys_module.txt"
   CMD='
-    { lsmod | tail -n +2 | awk "{print \$1}" | sort; } > '"${SECTION_DIR}/tmp1.lst"' 2>&1
-    { ls /sys/module | sort; } > '"${SECTION_DIR}/tmp2.lst"' 2>&1
+    lsmod | tail -n +2 | awk "{print \$1}" | sort > '"${SECTION_DIR}/tmp1.lst"'
+    ls /sys/module | sort > '"${SECTION_DIR}/tmp2.lst"'
     diff -u '"${SECTION_DIR}/tmp1.lst"' '"${SECTION_DIR}/tmp2.lst"'
   '
   run_check "Compare lsmod vs /sys/module" "T1215" "$CMD" "$RAW_OUT"
@@ -183,8 +220,8 @@ scan_kernel_modules() {
   # 1.4 Detect hidden/malicious modules via diff
   RAW_OUT="${SECTION_DIR}/04_detect_hidden_modules.txt"
   CMD='
-    { lsmod | tail -n +2 | awk "{print \$1}" | sort; } > '"${SECTION_DIR}/tmp1.lst"' 2>&1
-    { ls /sys/kernel/tracing/available_filter_functions | sed -n "s/.*\[\([^]]*\)\].*/\1/p" | sort | uniq; } > '"${SECTION_DIR}/tmp2.lst"' 2>&1
+    lsmod | tail -n +2 | awk "{print \$1}" | sort > '"${SECTION_DIR}/tmp1.lst"'
+    ls /sys/kernel/tracing/available_filter_functions | sed -n "s/.*\[\([^]]*\)\].*/\1/p" | sort | uniq > '"${SECTION_DIR}/tmp2.lst"'
     diff -u '"${SECTION_DIR}/tmp1.lst"' '"${SECTION_DIR}/tmp2.lst"'
   '
   run_check "Detect hidden/malicious modules" "T1215" "$CMD" "$RAW_OUT"
@@ -192,8 +229,7 @@ scan_kernel_modules() {
 
   # 1.5 Check for eBPF / tracing hooks
   RAW_OUT="${SECTION_DIR}/05_check_tracing_hooks.txt"
-  CMD='cat /sys/kernel/debug/tracing/trace && cat /sys/kernel/debug/tracing/enabled_functions'
-  run_check "Check for eBPF / tracing hooks" "T1215" "$CMD" "$RAW_OUT"
+  run_check "Check for eBPF / tracing hooks" "T1215" "cat /sys/kernel/debug/tracing/trace && cat /sys/kernel/debug/tracing/enabled_functions" "$RAW_OUT"
 
   html_footer
 }
@@ -201,7 +237,8 @@ scan_kernel_modules() {
 # 2. /proc & Process Artifacts
 scan_proc_artifacts() {
   SECTION_NAME="/proc & Process Artifacts"
-  SECTION_DIR="${ROOT_DIR}/02_proc_artifacts"
+  DIR_NAME="$(section_dir proc)"
+  SECTION_DIR="${ROOT_DIR}/${DIR_NAME}"
   HTML_FILE="${SECTION_DIR}/index.html"
 
   mkdir -p "${SECTION_DIR}"
@@ -257,13 +294,11 @@ scan_proc_artifacts() {
 
   # 2.6 Working directory of daemons/processes
   RAW_OUT="${SECTION_DIR}/06_proc_cwd.txt"
-  CMD="ls -alR /proc/*/cwd 2>/dev/null"
-  run_check "Working directory of processes" "T1036" "$CMD" "$RAW_OUT"
+  run_check "Working directory of processes" "T1036" "ls -alR /proc/*/cwd 2>/dev/null" "$RAW_OUT"
 
   # 2.7 Processes running from /tmp or /dev/shm
   RAW_OUT="${SECTION_DIR}/07_proc_from_tmp_dev.txt"
-  CMD='ls -alR /proc/*/cwd 2>/dev/null | grep "/tmp\|/dev/shm"'
-  run_check "Processes running from /tmp or /dev/shm" "T1036" "$CMD" "$RAW_OUT"
+  run_check "Processes running from /tmp or /dev/shm" "T1036" "ls -alR /proc/*/cwd 2>/dev/null | grep \"/tmp\\|/dev/shm\"" "$RAW_OUT"
 
   html_footer
 }
@@ -271,7 +306,8 @@ scan_proc_artifacts() {
 # 3. Filesystem Integrity & Attributes
 scan_filesystem_integrity() {
   SECTION_NAME="Filesystem Integrity & Attributes"
-  SECTION_DIR="${ROOT_DIR}/03_fs_integrity"
+  DIR_NAME="$(section_dir fs)"
+  SECTION_DIR="${ROOT_DIR}/${DIR_NAME}"
   HTML_FILE="${SECTION_DIR}/index.html"
 
   mkdir -p "${SECTION_DIR}"
@@ -287,7 +323,7 @@ scan_filesystem_integrity() {
 
   # 3.3 Immutable files & directories
   RAW_OUT="${SECTION_DIR}/03_lsattr.txt"
-  run_check "Immutable files & directories" "T1562.003" "lsattr -R / 2>/dev/null | grep '----i'" "$RAW_OUT"
+  run_check "Immutable files & directories" "T1562.003" "lsattr -R / 2>/dev/null | grep 'i'" "$RAW_OUT"
 
   # 3.4 Find SUID/SGID files
   RAW_OUT="${SECTION_DIR}/04_suid_sgid.txt"
@@ -303,8 +339,8 @@ scan_filesystem_integrity() {
 
   # 3.7 Bind-mount anomalies
   RAW_OUT="${SECTION_DIR}/07_bind_mounts.txt"
-  CMD='cat /proc/mounts | grep proc; mount | grep -vE "(/etc|/proc|/sys|/dev)"'
-  run_check "Bind-mount anomalies" "T1562.003" "$CMD" "$RAW_OUT"
+  CMD='iptables -L -v -n 2>/dev/null; iptables -t nat -L -v -n 2>/dev/null; cat /proc/mounts | grep proc; mount | grep -vE "(/etc|/proc|/sys|/dev)"'
+  run_check "Bind-mount anomalies & iptables rules" "T1562.003" "$CMD" "$RAW_OUT"
 
   html_footer
 }
@@ -312,7 +348,8 @@ scan_filesystem_integrity() {
 # 4. Network Indicators
 scan_network_indicators() {
   SECTION_NAME="Network Indicators"
-  SECTION_DIR="${ROOT_DIR}/04_network_indicators"
+  DIR_NAME="$(section_dir network)"
+  SECTION_DIR="${ROOT_DIR}/${DIR_NAME}"
   HTML_FILE="${SECTION_DIR}/index.html"
 
   mkdir -p "${SECTION_DIR}"
@@ -330,10 +367,9 @@ scan_network_indicators() {
   RAW_OUT="${SECTION_DIR}/03_tcpdump_dns.txt"
   run_check "DNS tunneling / Unexpected DNS queries" "T1040" "tcpdump -i any -n -s0 udp port 53 -c 20" "$RAW_OUT"
 
-  # 4.4 iptables rules / NAT anomalies
+  # 4.4 iptables & NAT anomalies
   RAW_OUT="${SECTION_DIR}/04_iptables_rules.txt"
-  CMD='iptables -L -v -n 2>/dev/null; iptables -t nat -L -v -n 2>/dev/null'
-  run_check "iptables rules / NAT anomalies" "T1562.003" "$CMD" "$RAW_OUT"
+  run_check "iptables rules & NAT anomalies" "T1562.003" "iptables -L -v -n 2>/dev/null; iptables -t nat -L -v -n 2>/dev/null" "$RAW_OUT"
 
   # 4.5 eBPF / XDP programs
   RAW_OUT="${SECTION_DIR}/05_bpftool.txt"
@@ -346,7 +382,8 @@ scan_network_indicators() {
 # 5. User Accounts & Authentication
 scan_user_accounts() {
   SECTION_NAME="User Accounts & Authentication"
-  SECTION_DIR="${ROOT_DIR}/05_user_accounts"
+  DIR_NAME="$(section_dir users)"
+  SECTION_DIR="${ROOT_DIR}/${DIR_NAME}"
   HTML_FILE="${SECTION_DIR}/index.html"
 
   mkdir -p "${SECTION_DIR}"
@@ -383,7 +420,8 @@ scan_user_accounts() {
 # 6. System Logs & Audit Trails
 scan_system_logs() {
   SECTION_NAME="System Logs & Audit Trails"
-  SECTION_DIR="${ROOT_DIR}/06_system_logs"
+  DIR_NAME="$(section_dir logs)"
+  SECTION_DIR="${ROOT_DIR}/${DIR_NAME}"
   HTML_FILE="${SECTION_DIR}/index.html"
 
   mkdir -p "${SECTION_DIR}"
@@ -415,7 +453,8 @@ scan_system_logs() {
 # 7. Live Memory & Disk Forensics
 scan_live_forensics() {
   SECTION_NAME="Live Memory & Disk Forensics"
-  SECTION_DIR="${ROOT_DIR}/07_live_forensics"
+  DIR_NAME="$(section_dir live)"
+  SECTION_DIR="${ROOT_DIR}/${DIR_NAME}"
   HTML_FILE="${SECTION_DIR}/index.html"
 
   mkdir -p "${SECTION_DIR}"
@@ -430,7 +469,7 @@ scan_live_forensics() {
   run_check "Dump full RAM (LiME)" "T1055" "insmod lime.ko path=/tmp/mem_${TIMESTAMP}.lime format=lime" "$RAW_OUT"
 
   # 7.3 Process memory snapshot (interactive)
-  echo "Do you want to perform a process memory snapshot? (y/N)"
+  echo "Perform process memory snapshot? (y/N)"
   read RESP_MEM
   if [ "$RESP_MEM" = "y" ] || [ "$RESP_MEM" = "Y" ]; then
     echo "Enter PID to snapshot:"
@@ -438,10 +477,12 @@ scan_live_forensics() {
     RAW_OUT="${SECTION_DIR}/03_proc_${TARGET_PID}_gcore.txt"
     CMD="gcore ${TARGET_PID}"
     run_check "Process memory snapshot (PID=${TARGET_PID})" "T1055" "$CMD" "$RAW_OUT"
+  else
+    echo "<p>Process memory snapshot: skipped.</p>" >> "$HTML_FILE"
   fi
 
   # 7.4 Create disk image locally (interactive)
-  echo "Do you want to create a local disk image? (y/N)"
+  echo "Create local disk image? (y/N)"
   read RESP_IMG
   if [ "$RESP_IMG" = "y" ] || [ "$RESP_IMG" = "Y" ]; then
     echo "Enter device path (e.g., /dev/sda):"
@@ -450,23 +491,22 @@ scan_live_forensics() {
     CMD="dd if=${DEV_PATH} bs=4M of=${SECTION_DIR}/disk_image_${TIMESTAMP}.dd"
     run_check "Create disk image (device=${DEV_PATH})" "T1005" "$CMD" "$RAW_OUT"
     gzip "${SECTION_DIR}/disk_image_${TIMESTAMP}.dd" 2>/dev/null
+  else
+    echo "<p>Disk image creation: skipped.</p>" >> "$HTML_FILE"
   fi
 
-  # 7.5 Carve filesystem timeline (requires <IMAGE> environment variable)
-  if [ -n "$TIMELINE_IMAGE" ]; then
-    OFFSET="$(mmls "$TIMELINE_IMAGE" 2>/dev/null | head -n 1 | awk '{print $1}')"
+  # 7.5 Carve filesystem timeline (requires TIMELINE_IMAGE environment variable)
+  if [ -n "$TIMELINE_IMAGE" ] && [ -r "$TIMELINE_IMAGE" ]; then
     RAW_OUT="${SECTION_DIR}/05_timeline.txt"
     CMD='
-      mmls "'"$TIMELINE_IMAGE"'" | head -n 1 | awk "{print \$1}" | {
-        OFFSET="\$1"
-        fls -o "\$OFFSET" -r -m / "'"$TIMELINE_IMAGE"'" > "'"${SECTION_DIR}/fls.txt"'"
-        mactime -b "'"${SECTION_DIR}/fls.txt"'" > "'"${SECTION_DIR}/timeline_"${TIMESTAMP}".csv"'"
-        echo "Timeline generated: timeline_'${TIMESTAMP}'.csv"
-      }
+      OFFSET=$(mmls "'"$TIMELINE_IMAGE"'" 2>/dev/null | head -n 1 | awk "{print \$1}")
+      fls -o "$OFFSET" -r -m / "'"$TIMELINE_IMAGE"'" > "'"${SECTION_DIR}/fls_'${TIMESTAMP}'.txt"'"
+      mactime -b "'"${SECTION_DIR}/fls_'${TIMESTAMP}'.txt"'" > "'"${SECTION_DIR}/timeline_'${TIMESTAMP}'.csv"'"
+      echo "Timeline generated: timeline_'${TIMESTAMP}'.csv"
     '
     run_check "Carve filesystem timeline" "T1005" "$CMD" "$RAW_OUT"
   else
-    echo "<p>No TIMELINE_IMAGE set; skipping filesystem timeline carving.</p>" >> "$HTML_FILE"
+    echo "<p>No valid TIMELINE_IMAGE set or file unreadable; skipping filesystem timeline carving.</p>" >> "$HTML_FILE"
   fi
 
   html_footer
@@ -475,7 +515,8 @@ scan_live_forensics() {
 # 8. CLI & DFIR Tools
 scan_dfir_tools() {
   SECTION_NAME="CLI & DFIR Tools"
-  SECTION_DIR="${ROOT_DIR}/08_dfir_tools"
+  DIR_NAME="$(section_dir dfir)"
+  SECTION_DIR="${ROOT_DIR}/${DIR_NAME}"
   HTML_FILE="${SECTION_DIR}/index.html"
 
   mkdir -p "${SECTION_DIR}"
@@ -504,8 +545,19 @@ scan_dfir_tools() {
 
   # 8.6 Strace on suspicious process (example PID 1)
   RAW_OUT="${SECTION_DIR}/06_strace.txt"
-  run_check "Strace on suspicious process (PID=1)" "T1055" "strace -f -e execve -p 1 2>&1 -o ${SECTION_DIR}/strace_pid1.log" "$RAW_OUT"
-  mv "${SECTION_DIR}/strace_pid1.log" "${SECTION_DIR}/06_strace_detail.txt" 2>/dev/null
+  require_util strace
+  if [ "$SKIP_UTIL" -eq 1 ]; then
+    echo "Utility strace not found. Skipping this check." > "$RAW_OUT"
+    echo "Technique: Strace on process | MITRE ATT&CK TTP: T1055"
+    echo "Check performed [NO] : Utility not present"
+    echo "Utility strace not found. Skipping this check." >> "$HTML_FILE"
+  else
+    strace -f -e execve -p 1 -o "${SECTION_DIR}/strace_pid1.log" 2>/dev/null
+    echo "Output written to strace_pid1.log" > "$RAW_OUT"
+    sed 's/&/&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "${SECTION_DIR}/strace_pid1.log" >> "$HTML_FILE"
+    echo "Technique: Strace on process | MITRE ATT&CK TTP: T1055"
+    echo "Check performed [OK]"
+  fi
 
   # 8.7 List active BPF programs (bpftool)
   RAW_OUT="${SECTION_DIR}/07_bpftool_prog.txt"
@@ -525,7 +577,8 @@ scan_dfir_tools() {
 # 9. Container & VM Indicators
 scan_container_vm() {
   SECTION_NAME="Container & VM Indicators"
-  SECTION_DIR="${ROOT_DIR}/09_container_vm"
+  DIR_NAME="$(section_dir container)"
+  SECTION_DIR="${ROOT_DIR}/${DIR_NAME}"
   HTML_FILE="${SECTION_DIR}/index.html"
 
   mkdir -p "${SECTION_DIR}"
@@ -549,7 +602,8 @@ scan_container_vm() {
 # 10. Persistence & Backdoor Evidence
 scan_persistence() {
   SECTION_NAME="Persistence & Backdoor Evidence"
-  SECTION_DIR="${ROOT_DIR}/10_persistence"
+  DIR_NAME="$(section_dir persistence)"
+  SECTION_DIR="${ROOT_DIR}/${DIR_NAME}"
   HTML_FILE="${SECTION_DIR}/index.html"
 
   mkdir -p "${SECTION_DIR}"
@@ -581,7 +635,8 @@ scan_persistence() {
 # 11. Indicator & Timeline Correlation
 scan_timeline() {
   SECTION_NAME="Indicator & Timeline Correlation"
-  SECTION_DIR="${ROOT_DIR}/11_timeline"
+  DIR_NAME="$(section_dir timeline)"
+  SECTION_DIR="${ROOT_DIR}/${DIR_NAME}"
   HTML_FILE="${SECTION_DIR}/index.html"
 
   mkdir -p "${SECTION_DIR}"
@@ -607,6 +662,8 @@ scan_timeline() {
 ###############################################################################
 generate_master_index() {
   INDEX_FILE="${ROOT_DIR}/index.html"
+  SYSTEM_INFO="$(sed 's/&/&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "${ROOT_DIR}/system_info.txt")"
+
   cat <<EOF > "$INDEX_FILE"
 <!DOCTYPE html>
 <html>
@@ -615,31 +672,36 @@ generate_master_index() {
   <title>Forensics Scan Report - ${TIMESTAMP}</title>
   <style>
     body { font-family: sans-serif; margin: 20px; }
+    pre { background-color: #f4f4f4; padding: 10px; }
     a { text-decoration: none; color: #0366d6; }
     ul { list-style-type: none; padding: 0; }
     li { margin: 5px 0; }
+    .skipped { color: #888; }
   </style>
 </head>
 <body>
   <h1>Forensics Scan Report</h1>
   <p><strong>Generated:</strong> $(date -u)</p>
   <h2>System Information</h2>
-  <ul>
-    <li><a href="system_info.html">View System Info</a></li>
-  </ul>
+  <pre>
+${SYSTEM_INFO}
+  </pre>
   <h2>Sections</h2>
   <ul>
-    <li><a href="01_kernel_modules/index.html">01. Kernel & Modules</a></li>
-    <li><a href="02_proc_artifacts/index.html">02. /proc & Process Artifacts</a></li>
-    <li><a href="03_fs_integrity/index.html">03. Filesystem Integrity & Attributes</a></li>
-    <li><a href="04_network_indicators/index.html">04. Network Indicators</a></li>
-    <li><a href="05_user_accounts/index.html">05. User Accounts & Authentication</a></li>
-    <li><a href="06_system_logs/index.html">06. System Logs & Audit Trails</a></li>
-    <li><a href="07_live_forensics/index.html">07. Live Memory & Disk Forensics</a></li>
-    <li><a href="08_dfir_tools/index.html">08. CLI & DFIR Tools</a></li>
-    <li><a href="09_container_vm/index.html">09. Container & VM Indicators</a></li>
-    <li><a href="10_persistence/index.html">10. Persistence & Backdoor Evidence</a></li>
-    <li><a href="11_timeline/index.html">11. Indicator & Timeline Correlation</a></li>
+EOF
+
+  # Iterate over all sections, link if run, else mark skipped
+  for SEC in $ALL_SECTIONS; do
+    DIR_NAME="$(section_dir $SEC)"
+    TITLE="$(display_title $SEC)"
+    if echo "$SECTIONS" | grep -wq "$SEC"; then
+      echo "    <li><a href=\"${DIR_NAME}/index.html\">${TITLE} [RUN]</a></li>" >> "$INDEX_FILE"
+    else
+      echo "    <li class=\"skipped\">${TITLE} [SKIPPED]</li>" >> "$INDEX_FILE"
+    fi
+  done
+
+  cat <<EOF >> "$INDEX_FILE"
   </ul>
 </body>
 </html>
@@ -649,9 +711,18 @@ EOF
 ###############################################################################
 ###  Argument Parsing & Execution Flow
 ###############################################################################
+usage() {
+  echo "Usage: $0 [--all | kernel | proc | fs | network | users | logs | live | dfir | container | persistence | timeline]"
+  exit 1
+}
+
+if [ $# -lt 1 ]; then
+  usage
+fi
+
 case "$1" in
-  --all|"")
-    SECTIONS="kernel proc fs network users logs live dfir container persistence timeline"
+  --all)
+    SECTIONS="$ALL_SECTIONS"
     ;;
   kernel)      SECTIONS="kernel" ;;
   proc)        SECTIONS="proc" ;;
@@ -665,8 +736,7 @@ case "$1" in
   persistence) SECTIONS="persistence" ;;
   timeline)    SECTIONS="timeline" ;;
   *)
-    echo "Usage: $0 [--all | kernel | proc | fs | network | users | logs | live | dfir | container | persistence | timeline]"
-    exit 1
+    usage
     ;;
 esac
 
