@@ -1,92 +1,114 @@
-# Linux Forensics Scan Suite
+# Linux Forensics Scan Script
 
-A lightweight toolkit to perform native Linux/Unix compromise-detection checks. ummary of my experience in this domain, can be extended as well.
+**Version:** 0.1 (extended)
 
-## Contents
+## Overview
+This script performs a comprehensive set of Linux/Unix forensic checks, organizes results into directories, and generates both section-specific HTML reports and a master report. It supports additional export formats (JSON, CSV, TAR, ZIP) and an executive HTML summary. This is the sum of my experience in Linux Forensic domain, and is intended to provide a dipstick view of things that could be checked during a quick/ rapid analysis. It is very modular, and you can add your checks easily.
 
-- **linux_forensics_scan.sh**  
-  Modular script that:
-  - Runs predefined checks (kernel, filesystem, processes, network, etc.)
-  - Captures raw output in section-specific folders
-  - Generates HTML reports per section and a master index
-  - Accepts multiple section names (or `--all`) in any order
+Released under MIT license for now.
 
-- **unit_test_for_scan.sh**  
-  Simple test harness that:
-  - Executes each check command (skips interactive steps)
-  - Detects missing utilities (including commands inside composite checks)
-  - Logs status and basic output info to `unit_test_results.txt`
+## Features
+- Modular checks divided into sections:
+  1. **Kernel & Modules**
+  2. **/proc & Process Artifacts**
+  3. **Filesystem Integrity & Attributes**
+  4. **Network Indicators**
+  5. **User Accounts & Authentication**
+  6. **System Logs & Audit Trails**
+  7. **Live Memory & Disk Forensics** (disabled by default)
+  8. **CLI & DFIR Tools**
+  9. **Container & VM Indicators**
+  10. **Persistence & Backdoor Evidence**
+  11. **Indicator & Timeline Correlation**
 
-- **linux_forensic_techniques.md**  
-  Reference table of all native and external techniques used by the scan script:
-  - Technique name
-  - Native vs. external utility
-  - MITRE ATT&CK TTP mapping
-  - Sample command  
-  Consult this file to understand each check, add new techniques, or review coverage
+- Counts all lines (including commented checks) to match the original total count of checks.
+- Automatically marks commented lines as **SKIPPED**.
+- Generates per-section HTML reports with:
+  - A table of techniques and raw output files
+  - Inline raw output with MITRE ATT&CK framework
+- Generates a master `index.html` with:
+  - System information (Hostname, OS, IP addresses)
+  - Summary table of total, successful, skipped, and failed checks (overall and by section)
+- Supports export flags:
+  - `--csv` → `report_summary.csv` (with columns: Section, Technique, TTP, Command, Status)
+  - `--json` → `report_summary.json` (array of JSON objects for each check)
+  - `--tar` → archives the entire output directory as `.tar.gz`
+  - `--zip` → archives the entire output directory as `.zip`
+- Supports an **Executive HTML Summary** (`--report`) with:
+  - High-level overview and overall statistics
+  - Per-section summary (total, OK, skipped, failed)
+  - Section-specific findings (e.g., number of hidden modules, open files, etc.)
+  - Lists of notable failures and skipped checks
 
 ## Requirements
-
-- POSIX-compliant shell (`/bin/sh`)
-- Standard utilities: `lsmod`, `awk`, `sort`, `diff`, `grep`, `find`, etc.
-- Optional tools for certain checks:
-  - `iptables`, `ss`, `lsof`, `tcpdump`
-  - `rpm`/`debsums`, `lsattr`, `jq`, `bpftool`, `tracee-ebpf`
-  - `chkrootkit`, `rkhunter`, `unhide`, `yara`, `strace`
-- Root privileges for deeper checks (e.g., dumping memory, reading protected files)
+- Bash 4+
+- Standard Unix utilities (`lsmod`, `cat`, `find`, `netstat`, `lsof`, `journalctl`, etc.)
+- Root privileges for certain checks (warnings shown if not run as root)
 
 ## Usage
 
-1. **Scan for anomalies**
-   ```sh
-   chmod +x linux_forensics_scan.sh
-   ./linux_forensics_scan.sh --all
-   # Or:
-   ./linux_forensics_scan.sh kernel fs proc network
+```bash
+chmod +x Lin.sh
+./Lin.sh [--all | <section> ...] [--json] [--csv] [--tar] [--zip] [--report]
+```
+
+- `--all` : Run all sections (kernel, proc, fs, network, users, logs, live, dfir, container, persistence, timeline)
+- `<section>` : Specify one or more sections by name (e.g. `kernel fs users`)
+- `--json` : Generate `report_summary.json` with results
+- `--csv`  : Generate `report_summary.csv` with results
+- `--tar`  : Create `<output_dir>.tar.gz`
+- `--zip`  : Create `<output_dir>.zip`
+- `--report` : Create `executive_summary.html` with a high-level summary
+
+### Examples
+
+1. Run all checks and produce an executive summary:
+   ```bash
+   ./Lin.sh --all --report
    ```
-   - Creates a timestamped `forensics_output_<TIMESTAMP>/` directory  
-   - Runs only specified sections (or all if `--all`)  
-   - Produces:
-     - Raw output files (`.txt`) under numbered subdirectories  
-     - HTML reports per section  
-     - A master `index.html` summarizing which sections ran or were skipped
 
-2. **Run unit tests**
-   ```sh
-   chmod +x unit_test_for_scan.sh
-   ./unit_test_for_scan.sh
+2. Run only kernel, filesystem, and user account checks, output CSV and ZIP archive:
+   ```bash
+   ./Lin.sh kernel fs users --csv --zip
    ```
-   - Generates `unit_test_results.txt` with one entry per check  
-   - Flags missing utilities, permission errors, or successful runs
 
-3. **Review technique definitions**
-   ```sh
-   less linux_forensic_techniques.md
+3. Run process and log checks, output JSON, ZIP, and executive summary:
+   ```bash
+   ./Lin.sh proc logs --json --zip --report
    ```
-   - Contains a table of every technique and its associated command/TTP  
-   - Helps audit or extend the script’s checks
 
-## Sections & Checks
+## Output Structure
+```
+forensics_output_<TIMESTAMP>/
+├── system_info.txt
+├── report_summary.csv      (if --csv)
+├── report_summary.json     (if --json)
+├── executive_summary.html  (if --report)
+├── index.html
+├── 01_kernel_modules/
+│   ├── index.html
+│   ├── 01_List_loaded_kernel_modules.txt
+│   ├── ...
+│   └── 05_Check_for_eBPF_tracing_hooks.txt
+├── 02_proc_artifacts/
+│   ├── index.html
+│   ├── 01_Processes_running_deleted_binaries.txt
+│   ├── 02_List_open_files.txt
+│   └── 03_Active_TCP_connections.txt
+├── 03_filesystem_checks/
+│   ├── index.html
+│   ├── 01_SUID_SGID_files.txt
+│   ├── 02_Recently_modified_files_last_24h.txt
+│   └── 03_Disk_usage.txt
+└── ... (other sections)
+```
 
-- **kernel**: loaded modules, kernel taint, hidden modules, eBPF hooks  
-- **proc**: deleted-binary processes, memfd fds, deleted mappings, `LD_PRELOAD`, cmdline/comm mismatch  
-- **fs**: RPM/DEB verification, immutable files, SUID/SGID, unowned files, hidden dirs, bind-mount/iptables  
-- **network**: listening sockets, open-socket mapping, DNS capture, iptables rules, BPF programs  
-- **users**: UID 0 entries, SSH keys, sudoers, login history, failed logins, history symlinks  
-- **logs**: control-character in logs, audit execve, journalctl, rotated logs, cron entries  
-- **live**: RAM dump (AVML/LiME), optional process memory, disk image, timeline carving  
-- **dfir**: chkrootkit, rkhunter, unhide, ELF inspection, YARA, strace, BPF audit  
-- **container**: running containers, mount info, VM logs  
-- **persistence**: `rc.local`, init scripts, systemd units, root SSH keys, hidden cron  
-- **timeline**: uptime, last logins, journal gaps  
+## Customization
+- To enable **live memory dumps** or **disk imaging**, edit the `live_checks` section in `Lin.sh` and uncomment the relevant lines (requires proper tools and root permissions).
+- All paths that write to the output directory use the `__ROOTDIR__` placeholder internally—no need to modify that unless reorganizing.
 
-## Notes
+## Troubleshooting
+- If you see `Utility <name> not found. Skipping this check.`, install or configure that utility, or ignore if not relevant.
+- If the script reports fewer checks than expected, verify your check-list variables (`kernel_checks`, `proc_checks`, etc.) still contain all lines.
 
-- Interactive checks prompt for consent and parameters  
-- Missing utilities are skipped; outputs note “Utility … not present”  
-- Root access is required for certain checks (e.g., `iptables`, `/proc` details, memory dumps)  
-- Consult `linux_forensic_techniques.md` to see exactly which commands map to which TTPs and utilities  
-
-## License
-
-Currently, MIT
+---
