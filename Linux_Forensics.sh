@@ -5,7 +5,7 @@
 # A modular shell script to perform native Linux/Unix compromise-detection checks,
 # organize raw outputs and HTML reports by section, and generate a master HTML index.
 # - Each section runs in its own background job when multiple sections are specified.
-# - Live memory (AVML/LiME) and disk imaging are disabled by default; see HELP.
+# - Live memory (AVML/LiME) and disk imaging (dd) are disabled by default; edit the script to enable them.
 # Created by Rishabh Dangwal
 #
 # Usage:
@@ -13,15 +13,9 @@
 #   ./linux_forensics_scan.sh [kernel fs proc network users logs live dfir container persistence timeline]
 #
 # Disabled-by-default features:
-#   * Live RAM dumps (AVML/LiME) and DD-based disk imaging are skipped unless the user explicitly enables them by editing the script.
-#
-# Version: 0.1
+#   * Live RAM dumps (AVML/LiME) and DD-based disk imaging are disabled unless explicitly enabled by uncommenting the relevant lines.
 
-echo "linux_forensics_scan.sh version 0.1 (section-level parallel)"
-
-TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
-ROOT_DIR="forensics_output_${TIMESTAMP}"
-ALL_SECTIONS="kernel proc fs network users logs live dfir container persistence timeline"
+VERSION="0.1 (section‐level parallel)"
 
 ###############################################################################
 ###  HELP / USAGE
@@ -40,7 +34,7 @@ Sections:
   network     Network Indicators
   users       User Accounts & Authentication
   logs        System Logs & Audit Trails
-  live        Live Memory & Disk Forensics (disabled by default)
+  live        Live Memory & Disk Forensics
   dfir        CLI & DFIR Tools
   container   Container & VM Indicators
   persistence Persistence & Backdoor Evidence
@@ -79,22 +73,32 @@ section_dir() {
   case "$1" in
     kernel)      echo "01_kernel_modules";;
     proc)        echo "02_proc_artifacts";;
-    fs)          echo "03_fs_integrity";;
-    network)     echo "04_network_indicators";;
-    users)       echo "05_user_accounts";;
-    logs)        echo "06_system_logs";;
-    live)        echo "07_live_forensics";;
+    fs)          echo "03_filesystem_checks";;
+    network)     echo "04_network_checks";;
+    users)       echo "05_user_account_checks";;
+    logs)        echo "06_log_audit_checks";;
+    live)        echo "07_live_memory_disk";;
     dfir)        echo "08_dfir_tools";;
-    container)   echo "09_container_vm";;
-    persistence) echo "10_persistence";;
-    timeline)    echo "11_timeline";;
-    *)           echo "$1";;
+    container)   echo "09_container_vm_checks";;
+    persistence) echo "10_persistence_checks";;
+    timeline)    echo "11_timeline_artifacts";;
+    *)           echo "";;  # Should never happen if validated earlier
   esac
 }
 
-###############################################################################
-###  HTML Header/Footer Templates
-###############################################################################
+################################################################################
+###  UTILITY CHECK & HTML HEADER/FOOTER HELPERS
+################################################################################
+require_util() {
+  UTIL_NAME="$1"
+  if ! command -v "$UTIL_NAME" >/dev/null 2>&1; then
+    SKIP_UTIL=1
+    return 1
+  fi
+  SKIP_UTIL=0
+  return 0
+}
+
 html_header() {
   SECTION_TITLE="$1"
   cat <<EOF > "$HTML_FILE"
@@ -110,11 +114,13 @@ html_header() {
     h1 { margin-bottom: 0.5em; }
     h2 { border-bottom: 1px solid #ccc; padding-bottom: 5px; margin-top: 1.5em; }
     p { margin: 0.5em 0; }
+    a { text-decoration: none; color: #000; }
+    a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
   <h1>${SECTION_TITLE}</h1>
-  <p><a href="../index.html">Back to report index</a></p>
+  <p><a href="../index.html">&larr; Back to report index</a></p>
 EOF
 }
 
@@ -125,56 +131,6 @@ html_footer() {
 EOF
 }
 
-###############################################################################
-###  Utility Check
-###############################################################################
-require_util() {
-  UTIL_NAME="$1"
-  if ! command -v "$UTIL_NAME" >/dev/null 2>&1; then
-    SKIP_UTIL=1
-    return 1
-  fi
-  SKIP_UTIL=0
-  return 0
-}
-
-###############################################################################
-###  print_system_info
-###############################################################################
-print_system_info() {
-  INFO_FILE="${ROOT_DIR}/system_info.txt"
-  mkdir -p "$ROOT_DIR"
-  {
-    echo "Hostname: $(hostname)"
-    echo "Date: $(date -u)"
-    echo "OS Details: $(uname -a || echo \"uname not available\")"
-    if command -v lsb_release >/dev/null 2>&1; then
-      echo "Distributor ID: $(lsb_release -i -s)"
-      echo "Release: $(lsb_release -r -s)"
-      echo "Codename: $(lsb_release -c -s)"
-    elif [ -f /etc/os-release ]; then
-      . /etc/os-release
-      echo "NAME: $NAME"
-      echo "VERSION: $VERSION"
-    fi
-    echo "IP Addresses:"
-    if command -v hostname >/dev/null 2>&1 && hostname -I >/dev/null 2>&1; then
-      hostname -I
-    elif command -v ip >/dev/null 2>&1; then
-      ip -o -4 addr list | awk '{print $2": "$4}'
-    else
-      ifconfig 2>/dev/null | grep -E 'inet '
-    fi
-  } > "$INFO_FILE"
-}
-
-###############################################################################
-###  run_check (sequential)
-###
-###  Executes a single check:
-###    - Writes raw output to RAW_OUT
-###    - Appends an HTML snippet directly to section's index.html
-###############################################################################
 run_check() {
   TECH_DESC="$1"
   TTP="$2"
@@ -196,10 +152,10 @@ run_check() {
     sh -c "$CMD" > "$RAW_OUT" 2>&1
     RC=$?
     if [ $RC -ne 0 ]; then
-      sed 's/&/&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "$RAW_OUT" >> "$HTML_FILE"
+      sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "$RAW_OUT" >> "$HTML_FILE"
       echo "Check performed [NO] : Exit code ${RC}"
     else
-      sed 's/&/&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "$RAW_OUT" >> "$HTML_FILE"
+      sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "$RAW_OUT" >> "$HTML_FILE"
       echo "Check performed [OK]"
     fi
   fi
@@ -207,118 +163,22 @@ run_check() {
   echo "</pre>" >> "$HTML_FILE"
 }
 
-###############################################################################
-###  Data: checks grouped by section (TECH_DESC|TTP|COMMAND)
-###############################################################################
-kernel_checks="
-List loaded kernel modules|T1215|lsmod
-Check for kernel taint|T1215|cat /proc/sys/kernel/tainted
-Compare lsmod vs /sys/module|T1215|lsmod | tail -n +2 | awk \"{print \\\$1}\" | sort > ${ROOT_DIR}/__tmp1.lst && ls /sys/module | sort > ${ROOT_DIR}/__tmp2.lst && diff -u ${ROOT_DIR}/__tmp1.lst ${ROOT_DIR}/__tmp2.lst && rm -f ${ROOT_DIR}/__tmp1.lst ${ROOT_DIR}/__tmp2.lst
-Detect hidden/malicious modules|T1215|lsmod | tail -n +2 | awk \"{print \\\$1}\" | sort > ${ROOT_DIR}/__tmp1.lst && ls /sys/kernel/tracing/available_filter_functions | sed -n \"s/.*\\\\[\\\\([^]]*\\\\)\\\\].*/\\\\1/p\" | sort | uniq > ${ROOT_DIR}/__tmp2.lst && diff -u ${ROOT_DIR}/__tmp1.lst ${ROOT_DIR}/__tmp2.lst && rm -f ${ROOT_DIR}/__tmp1.lst ${ROOT_DIR}/__tmp2.lst
-Check for eBPF / tracing hooks|T1215|cat /sys/kernel/debug/tracing/trace 2>/dev/null; cat /sys/kernel/debug/tracing/enabled_functions 2>/dev/null
-"
-
-proc_checks="
-Processes running deleted binaries|T1055|ls -alR /proc/*/exe 2>/dev/null | grep deleted
-Memory-only (memfd) file descriptors|T1055|for pid in \$(ls /proc 2>/dev/null | grep \"^[0-9]\+\"); do ls \"/proc/\${pid}/fd\" 2>/dev/null | grep memfd && echo \"PID: \${pid}\"; done
-Deleted mappings in process memory|T1055|for pid in \$(ls /proc 2>/dev/null | grep \"^[0-9]\+\"); do grep \"(deleted)\" \"/proc/\${pid}/maps\" 2>/dev/null && echo \"PID: \${pid}\"; done
-Environment-based injection (LD_PRELOAD)|T1574.002|for pid in \$(ls /proc 2>/dev/null | grep \"^[0-9]\+\"); do strings \"/proc/\${pid}/environ\" 2>/dev/null | tr \"\\0\" \"\\n\" | grep LD_PRELOAD && echo \"PID: \${pid}\"; done
-Mismatched cmdline vs comm|T1036|for pid in \$(ls /proc 2>/dev/null | grep \"^[0-9]\+\"); do if [ -r \"/proc/\${pid}/cmdline\" ] && [ -r \"/proc/\${pid}/comm\" ]; then CMPL=\$(tr \"\\0\" \" \" < \"/proc/\${pid}/cmdline\"); COMM=\$(cat \"/proc/\${pid}/comm\"); case \"\$CMPL\" in *\"\$COMM\"*) ;; *) echo \"PID: \${pid} | cmdline: \$CMPL | comm: \$COMM\" ;; esac; fi; done
-Working directory of processes|T1036|ls -alR /proc/*/cwd 2>/dev/null
-Processes running from /tmp or /dev/shm|T1036|ls -alR /proc/*/cwd 2>/dev/null | grep \"/tmp\\|/dev/shm\"
-"
-
-fs_checks="
-Verify installed RPM files|T1105|rpm -Va | grep '^..5\\.' 2>/dev/null
-Verify installed DEB files|T1105|debsums -c 2>/dev/null
-Immutable files & directories|T1562.003|lsattr -R / 2>/dev/null | grep ' i '
-Find SUID/SGID files|T1543|find / -type f \\( -perm -04000 -o -perm -02000 \\) -exec ls -lg {} \\; 2>/dev/null
-Files/dirs with no valid owner/group|T1083|find / \\( -nouser -o -nogroup \\) -exec ls -lg {} \\; 2>/dev/null
-Hidden files / Unexpected '.' directories|T1083|find / -type d -name '.*' 2>/dev/null
-Bind-mount anomalies & iptables rules|T1562.003|iptables -L -v -n 2>/dev/null; iptables -t nat -L -v -n 2>/dev/null; cat /proc/mounts | grep proc; mount | grep -vE \"(/etc|/proc|/sys|/dev)\"
-"
-
-network_checks="
-Listening sockets & owner|T1049|ss -plant 2>/dev/null
-Map open sockets to processes|T1049|lsof -Pn -i 2>/dev/null
-DNS tunneling / Unexpected DNS queries|T1040|tcpdump -i any -n -s0 udp port 53 -c 20
-iptables rules & NAT anomalies|T1562.003|iptables -L -v -n 2>/dev/null; iptables -t nat -L -v -n 2>/dev/null
-eBPF / XDP programs|T1215|ip link show | grep xdp 2>/dev/null; bpftool prog list 2>/dev/null; bpftool map list 2>/dev/null
-"
-
-users_checks="
-Look for UID=0 entries|T1087|grep '^.*:x:0:' /etc/passwd
-Check SSH authorized_keys files|T1574.002|find /home -name authorized_keys 2>/dev/null
-Inspect /etc/sudoers & /etc/sudoers.d/|T1574.002|cat /etc/sudoers 2>/dev/null; ls /etc/sudoers.d/ 2>/dev/null
-Recent login history|T1087|last
-Failed login attempts|T1087|lastb
-Symlinked or missing history files|T1087|find / -name '.*history' 2>/dev/null | grep null
-"
-
-logs_checks="
-Binary data injected into logs|T1005|grep '[[:cntrl:]]' /var/log/*.log 2>/dev/null
-Auditd execve events|T1005|ausearch -m execve -ts today 2>/dev/null
-Inspect systemd journal|T1005|journalctl -S yesterday -U now 2>/dev/null
-Log rotation / Missing log files|T1005|ls -al /var/log/*.1 /var/log/*.gz 2>/dev/null
-Suspicious cron entries|T1053|ls /etc/cron* /var/spool/cron/crontabs 2>/dev/null
-"
-
-# Live checks disabled by default
-live_checks="
-Dump full RAM (AVML) [disabled]|T1055|echo 'AVML disabled by default'
-Dump full RAM (LiME) [disabled]|T1055|echo 'LiME disabled by default'
-Process memory snapshot (interactive) [disabled]|T1055|echo 'gcore snapshot disabled by default'
-Create disk image locally (interactive) [disabled]|T1005|echo 'dd disabled by default'
-Carve filesystem timeline (requires TIMELINE_IMAGE) [disabled]|T1005|echo 'timeline carving disabled by default'
-"
-
-dfir_checks="
-Check for known rootkits (chkrootkit)|T1215|chkrootkit
-Check for known rootkits (rkhunter)|T1215|rkhunter --check --sk
-Scan for hidden processes (unhide)|T1057|unhide quick
-Static ELF inspection (readelf/strings)|T1036|readelf -h /usr/bin/sshd 2>/dev/null; strings /usr/bin/sshd
-YARA scanning for known patterns (yara)|T1215|yara -r /usr/local/share/yara_rules -s /usr/bin/sshd
-Strace on process (PID 1)|T1055|strace -f -e execve -p 1 -o ${ROOT_DIR}/strace_pid1.log
-List active BPF programs (bpftool)|T1215|bpftool prog list 2>/dev/null
-List active BPF maps|T1215|bpftool map list 2>/dev/null
-Audit kernel syscall hooks via BPF (tracee-ebpf)|T1215|tracee-ebpf --list
-"
-
-container_checks="
-List running Docker containers|T1536|docker ps --format '{{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Status}}'
-Check Docker container mounts|T1536|jq '.Mounts' /var/lib/docker/containers/*/config.v2.json 2>/dev/null
-Inspect KVM/QEMU VM logs|T1562.003|ls /var/log/libvirt/qemu 2>/dev/null
-"
-
-persistence_checks="
-Inspect /etc/rc.local|T1547|cat /etc/rc.local 2>/dev/null
-List scripts in init directories|T1547|ls /etc/init.d/ /etc/rc*.d/ 2>/dev/null
-List systemd unit files and statuses|T1547|systemctl list-unit-files --type=service --state=enabled
-Check SSH persistence in root’s home|T1574.002|ls /root/.ssh/authorized_keys 2>/dev/null
-Check for hidden cron entries|T1053|grep -R '.' /var/spool/cron/crontabs 2>/dev/null
-"
-
-timeline_checks="
-Uptime & unexpected reboots|T1050|uptime
-Correlate user logins with suspicious times|T1087|last -s -7days
-Check for gaps in logs|T1005|journalctl --verify 2>/dev/null
-"
-
-###############################################################################
-###  run_section: run each check sequentially; section may run in background
-###############################################################################
 run_section() {
   SECTION="$1"
   CHECKS_VAR="$2"
-  SECTION_NAME="$(display_title $SECTION)"
-  DIR_NAME="$(section_dir $SECTION)"
+  SECTION_NAME="$(display_title "$SECTION")"
+  DIR_NAME="$(section_dir "$SECTION")"
   SECTION_DIR="${ROOT_DIR}/${DIR_NAME}"
   HTML_FILE="${SECTION_DIR}/index.html"
 
-  mkdir -p "${SECTION_DIR}"
+  if ! mkdir -p "${SECTION_DIR}"; then
+    echo "ERROR: Could not create directory '${SECTION_DIR}'." >&2
+    return 1
+  fi
+
   html_header "$SECTION_NAME"
 
-  # Retrieve the list and run sequentially
+  # Retrieve the pipe-separated list of TECH_DESC|TTP|CMD
   LIST=$(eval "printf '%s\n' \"\${${CHECKS_VAR}}\"")
   TOTAL_CHECKS=$(echo "$LIST" | grep -c '^[^ ]')
   COUNTER=0
@@ -326,7 +186,7 @@ run_section() {
   while IFS='|' read -r TECH_DESC TTP CMD; do
     COUNTER=$((COUNTER + 1))
     echo "    [${SECTION_NAME}] Running check ${COUNTER}/${TOTAL_CHECKS}: ${TECH_DESC}"
-    SAFE_DESC="$(echo "$TECH_DESC" | tr ' /' '_' )"
+    SAFE_DESC="$(printf "%s" "$TECH_DESC" | tr ' /' '_' )"
     RAW_OUT="${SECTION_DIR}/$(printf '%02d' "$COUNTER")_${SAFE_DESC}.txt"
     run_check "$TECH_DESC" "$TTP" "$CMD" "$RAW_OUT"
   done <<EOF
@@ -337,12 +197,11 @@ EOF
   echo "    [${SECTION_NAME}] Completed (${TOTAL_CHECKS}/${TOTAL_CHECKS} checks)."
 }
 
-###############################################################################
-###  Master HTML Index Generation
-###############################################################################
 generate_master_index() {
   INDEX_FILE="${ROOT_DIR}/index.html"
-  SYSTEM_INFO="$(sed 's/&/&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "${ROOT_DIR}/system_info.txt")"
+
+  # Read, escape, and embed system info
+  SYSTEM_INFO="$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "${ROOT_DIR}/system_info.txt")"
 
   cat <<EOF > "$INDEX_FILE"
 <!DOCTYPE html>
@@ -355,11 +214,14 @@ generate_master_index() {
     ul { list-style-type: none; padding: 0; }
     li { margin: 5px 0; }
     .skipped { color: #888; }
+    a { text-decoration: none; color: #000; }
+    a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
   <h1>Forensics Scan Report</h1>
-  <p><strong>Generated:</strong> $(date -u)</p>
+  <p><strong>Version:</strong> ${VERSION}</p>
+  <p><strong>Generated:</strong> ${TIMESTAMP}</p>
   <h2>System Information</h2>
   <pre>${SYSTEM_INFO}</pre>
   <h2>Sections</h2>
@@ -367,13 +229,22 @@ generate_master_index() {
 EOF
 
   for SEC in $ALL_SECTIONS; do
-    DIR_NAME="$(section_dir $SEC)"
-    TITLE="$(display_title $SEC)"
-    if echo "$SECTIONS" | grep -wq "$SEC"; then
-      echo "    <li><a href=\"${DIR_NAME}/index.html\">${TITLE} [RUN]</a></li>" >> "$INDEX_FILE"
-    else
-      echo "    <li class=\"skipped\">${TITLE} [SKIPPED]</li>" >> "$INDEX_FILE"
-    fi
+    # Only link those sections that were actually requested
+    case " $SECTIONS " in
+      *" $SEC "*) 
+        DIR_NAME="$(section_dir "$SEC")"
+        TITLE="$(display_title "$SEC")"
+        if [ -d "${ROOT_DIR}/${DIR_NAME}" ] && [ -f "${ROOT_DIR}/${DIR_NAME}/index.html" ]; then
+          echo "    <li><a href=\"${DIR_NAME}/index.html\">${TITLE} [RUN]</a></li>" >> "$INDEX_FILE"
+        else
+          echo "    <li class=\"skipped\">${TITLE} [ERROR]</li>" >> "$INDEX_FILE"
+        fi
+        ;;
+      *)
+        TITLE="$(display_title "$SEC")"
+        echo "    <li class=\"skipped\">${TITLE} [SKIPPED]</li>" >> "$INDEX_FILE"
+        ;;
+    esac
   done
 
   cat <<EOF >> "$INDEX_FILE"
@@ -383,26 +254,155 @@ EOF
 EOF
 }
 
-###############################################################################
-###  Argument Parsing & Execution Flow (with section-level parallelism)
-###############################################################################
+print_system_info() {
+  INFO_FILE="${ROOT_DIR}/system_info.txt"
+  if ! mkdir -p "$ROOT_DIR"; then
+    echo "ERROR: Could not create output directory '${ROOT_DIR}'." >&2
+    exit 1
+  fi
+
+  {
+    echo "Hostname: $(hostname)"
+    echo "Date: $(date -u)"
+    echo "OS Details: $(uname -a || echo "uname not available")"
+    if command -v lsb_release >/dev/null 2>&1; then
+      echo "Distributor ID: $(lsb_release -i -s)"
+      echo "Release: $(lsb_release -r -s)"
+      echo "Codename: $(lsb_release -c -s)"
+    elif [ -f /etc/os-release ]; then
+      . /etc/os-release
+      echo "NAME: $NAME"
+      echo "VERSION: $VERSION"
+    fi
+    echo "IP Addresses:"
+    if command -v hostname >/dev/null 2>&1 && hostname -I >/dev/null 2>&1; then
+      hostname -I
+    elif command -v ip >/dev/null 2>&1; then
+      ip -o -4 addr list | awk '{print $2": "$4}'
+    else
+      ifconfig 2>/dev/null | grep -E 'inet '
+    fi
+  } > "$INFO_FILE"
+}
+
+################################################################################
+###  DEFINE ALL CHECK-LISTS (TECH_DESC|TTP|CMD)
+################################################################################
+
+ALL_SECTIONS="kernel proc fs network users logs live dfir container persistence timeline"
+
+kernel_checks="
+List loaded kernel modules|T1215|lsmod
+Check for kernel taint|T1215|cat /proc/sys/kernel/tainted
+Compare lsmod vs /sys/module|T1215|lsmod | tail -n +2 | awk '{print \$1}' > \${ROOT_DIR}/__tmp1.lst && ls /sys/module | sort > \${ROOT_DIR}/__tmp2.lst && diff \${ROOT_DIR}/__tmp1.lst \${ROOT_DIR}/__tmp2.lst && rm -f \${ROOT_DIR}/__tmp1.lst \${ROOT_DIR}/__tmp2.lst
+Detect hidden/malicious modules|T1215|lsmod | tail -n +2 | awk '{print \$1}' > \${ROOT_DIR}/__tmp1.lst && ls /sys/module | sort > \${ROOT_DIR}/__tmp2.lst && comm -23 \${ROOT_DIR}/__tmp1.lst \${ROOT_DIR}/__tmp2.lst && rm -f \${ROOT_DIR}/__tmp1.lst \${ROOT_DIR}/__tmp2.lst
+Check for eBPF/tracing hooks|T1215|cat /sys/kernel/debug/tracing/available_filter_functions 2>/dev/null || echo \"No eBPF filters available\"; cat /sys/kernel/debug/tracing/enabled_functions 2>/dev/null
+"
+
+proc_checks="
+Processes running deleted binaries|T1055|ls -alR /proc/*/exe 2>/dev/null | grep deleted
+List open files|T1055|lsof -nP 2>/dev/null
+Active TCP connections|T1049|cat /proc/net/tcp
+"
+
+fs_checks="
+SUID/SGID files|T1059|find / -perm /4000 2>/dev/null
+Recently modified files (last 24h)|T1007|find / -mtime -1 2>/dev/null
+Disk usage|T1083|df -h
+"
+
+network_checks="
+Open listening sockets|T1040|netstat -tunlp 2>/dev/null
+Firewall rules|T1564|iptables -L -nv 2>/dev/null
+Socket stats|T1049|ss -tulpn 2>/dev/null
+"
+
+users_checks="
+List /etc/passwd|T1087.001|cat /etc/passwd
+List /etc/shadow|T1087.002|cat /etc/shadow
+List sudoers group members|T1059.003|getent group sudo
+"
+
+logs_checks="
+Failed SSH logins|T1110|grep -i 'failed password' /var/log/auth.log 2>/dev/null
+System journal errors|T1005|journalctl -p err --no-pager 2>/dev/null
+Recent dmesg entries|T1005|dmesg | tail -n 50
+"
+
+# (Disabled by default: uncomment to enable live dumps)
+live_checks="
+# Live memory dump with AVML (requires root and AVML installed)
+# T1055|avml --output \"\${ROOT_DIR}/memory.avml\"
+# Live disk image (requires root)
+# T1564|dd if=/dev/sda of=\"\${ROOT_DIR}/disk.img\" bs=1M
+Echo placeholder: Live memory/disk forensics are disabled by default. Edit the script to enable them.
+"
+
+dfir_checks="
+chkrootkit|T1016|chkrootkit
+rkhunter|T1007|rkhunter --check
+# volatility|T1560|volatility -f \"/dev/sda\" imageinfo
+"
+
+container_checks="
+Docker cgroup artifacts|T1610|grep -qa docker /proc/1/cgroup && echo 'Docker cgroup found'
+Detect VM/container|T1611|systemd-detect-virt --quiet && echo \"Inside VM or container\"
+"
+
+persistence_checks="
+Cron jobs|T1053|ls -la /etc/cron.d 2>/dev/null
+Bashrc injections|T1543|grep -R 'bash -i' /home 2>/dev/null
+Enabled systemd units|T1547|systemctl list-unit-files | grep enabled
+"
+
+timeline_checks="
+Log file timestamps|T1082|find /var/log -type f -printf '%TY-%Tm-%Td %TT %p\n' 2>/dev/null | sort
+User login history|T1056|last -F
+"
+
+################################################################################
+###  MAIN ARGUMENT PARSING & PREPARE SECTIONS
+################################################################################
+# (We replace the original grep-based validation with 'case ... in' for exact matches.)
+
 SECTIONS=""
+
 for ARG in "$@"; do
-  if [ "$ARG" = "--all" ]; then
-    SECTIONS="$ALL_SECTIONS"
-    break
-  fi
-  if echo "$ALL_SECTIONS" | grep -wq "$ARG"; then
-    SECTIONS="$SECTIONS $ARG"
-  else
-    echo "Unknown section: $ARG"
-    usage
-  fi
+  case "$ARG" in
+    --all)
+      SECTIONS="$ALL_SECTIONS"
+      break
+      ;;
+    kernel|proc|fs|network|users|logs|live|dfir|container|persistence|timeline)
+      SECTIONS="$SECTIONS $ARG"
+      ;;
+    *)
+      echo "Unknown section: '$ARG'"
+      usage
+      ;;
+  esac
 done
 
-SECTIONS="$(echo $SECTIONS | tr ' ' '\n' | awk '!x[$0]++' | tr '\n' ' ')"
-if echo "$@" | grep -wq -- "--all"; then
-  SECTIONS="$ALL_SECTIONS"
+# Trim any leading/trailing spaces
+SECTIONS="$(echo "$SECTIONS" | xargs)"
+
+if [ -z "$SECTIONS" ]; then
+  usage
+fi
+
+# Use UTC timestamp in ISO format (YYYYMMDD_HHMMSSZ)
+TIMESTAMP="$(date -u +'%Y%m%d_%H%M%SZ')"
+ROOT_DIR="forensics_output_${TIMESTAMP}"
+
+# Create the top-level output directory (error if it fails)
+if ! mkdir -p "$ROOT_DIR"; then
+  echo "ERROR: Could not create output directory '$ROOT_DIR'." >&2
+  exit 1
+fi
+
+echo "linux_forensics_scan.sh version ${VERSION}"
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Warning: not running as root; root-only checks will be skipped."
 fi
 
 print_system_info
@@ -411,10 +411,14 @@ TOTAL_SECTIONS=$(echo "$SECTIONS" | wc -w)
 CUR_SECTION=0
 PIDS=""
 
+################################################################################
+###  LAUNCH EACH REQUESTED SECTION IN PARALLEL (WITH A PROGRESS BANNER)
+################################################################################
 for SECTION in $SECTIONS; do
   CUR_SECTION=$((CUR_SECTION + 1))
-  SECTION_NAME="$(display_title $SECTION)"
+  SECTION_NAME="$(display_title "$SECTION")"
   echo "Overall progress: Section ${CUR_SECTION}/${TOTAL_SECTIONS} - '${SECTION_NAME}'"
+
   case "$SECTION" in
     kernel)      run_section "$SECTION" "kernel_checks" ;;
     proc)        run_section "$SECTION" "proc_checks" ;;
@@ -431,11 +435,12 @@ for SECTION in $SECTIONS; do
   PIDS="$PIDS $!"
 done
 
-# Wait for all section-jobs to finish
+# Wait for all background jobs to finish
 for pid in $PIDS; do
-  wait "$pid"
+  wait "$pid" || echo "WARNING: One background job (PID $pid) exited with an error."
 done
 
 generate_master_index
 
 echo "Scan complete. Output directory: ${ROOT_DIR}"
+exit 0
