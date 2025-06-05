@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 # linux_forensics_scan.sh v0.1 (with refined heuristics for all sections)
-#
+# Experimental heuristic support, based on an older version of the Linux_Forensic tool.
 # Implementation of native checks in SH format. POSIX compliant wherever possible.
 # organize raw outputs and HTML reports by section, and generate a master HTML index.
 # Created by Rishabh Dangwal
@@ -11,7 +11,7 @@
 #
 # Version: 0.1
 
-echo "linux_forensics_scan.sh version 0.1 (with refined heuristics)"
+echo "linux_forensics_scan.sh version 0.1 (with refined heuristics). Experimental tool, here be dragons!"
 
 ###############################################################################
 ###  Configuration and Utility Functions
