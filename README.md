@@ -5,7 +5,7 @@
 ## Overview
 This script performs a comprehensive set of Linux/Unix forensic checks, organizes results into directories, and generates both section-specific HTML reports and a master report. It supports additional export formats (JSON, CSV, TAR, ZIP) and an executive HTML summary. This is the sum of my experience in Linux Forensic domain, and is intended to provide a dipstick view of things that could be checked during a quick/ rapid analysis. It is very modular, and you can add your checks easily.
 
-Released under MIT license for now.
+Released under Apache License 2.0 license for now.
 
 ## Features
 - Modular checks divided into sections:
