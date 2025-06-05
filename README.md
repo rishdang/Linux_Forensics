@@ -21,8 +21,6 @@ Released under MIT license for now.
   10. **Persistence & Backdoor Evidence**
   11. **Indicator & Timeline Correlation**
 
-- Counts all lines (including commented checks) to match the original total count of checks.
-- Automatically marks commented lines as **SKIPPED**.
 - Generates per-section HTML reports with:
   - A table of techniques and raw output files
   - Inline raw output with MITRE ATT&CK framework
