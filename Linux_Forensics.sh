@@ -1,17 +1,17 @@
 #!/bin/bash
 #
-# linux_forensics_scan.sh v0.1 (extended: JSON, TAR, ZIP, CSV, REPORT; improved counting, root‐index table, section findings)
+# linux_forensics_scan.sh v0.1 (extended: JSON, TAR, ZIP, CSV, REPORT; improved counting, root-index table, section findings)
 #
 # - Retains all original pipelines and comments as “checks” (so total matches original count).
 # - Any line beginning with “#” is treated as a SKIPPED check.
 # - Root index shows a table (Section | Link | Total | OK | SKIPPED | FAILED).
 # - Child indexes have navigation tables and links.
-# - New flag: --report → generates an executive HTML summary, including per‐section findings.
+# - New flag: --report → generates an executive HTML summary, including per-section findings.
 # - CSV/JSON/TAR/ZIP exports otherwise unchanged.
 #
 # Created by Rishabh Dangwal
 
-VERSION="0.1 (extended: JSON, TAR, ZIP, CSV, REPORT; improved counting, root‐index table, section findings)"
+VERSION="0.1 (extended)"
 
 ###############################################################################
 ###  HELP / USAGE
@@ -42,11 +42,11 @@ Valid sections (choose one or more, unless --all):
   timeline    Indicator & Timeline Correlation
 
 Examples:
-  \$0 --all --report
-  \$0 kernel fs users --csv --report
-  \$0 proc logs --json --zip --report
+  $0 --all --report
+  $0 kernel fs users --csv --report
+  $0 proc logs --json --zip --report
 
-Lines beginning with “#” in any list are treated as SKIPPED checks.
+Lines beginning with "#" in any list are treated as SKIPPED checks.
 EOF
   exit 1
 }
@@ -219,7 +219,7 @@ run_check() {
 
   # Build JSON base (append status later)
   local JSON_BASE
-  JSON_BASE="{\"section\":\"${SECTION}\",\"technique\":\"$(printf '%s' "${TECH_DESC}" | sed 's/"/\\"/g')\",\"ttp\":\"${TTP}\",\"command\":\"$(printf '%s' "${CMD}" | sed 's/"/\\"/g')\",\"status\":"
+  JSON_BASE="{\"section\":\"${SECTION}\",\"technique\":\"$(printf '%s' "${TECH_DESC}" | sed 's/\"/\\\\\"/g')\",\"ttp\":\"${TTP}\",\"command\":\"$(printf '%s' "${CMD}" | sed 's/\"/\\\\\"/g')\",\"status\":"
 
   # Screen output includes TTP
   echo "    [${SECTION}] Running check ${CHECK_IDX}/${TOTAL_CHECKS}: ${TECH_DESC} (TTP: ${TTP})"
@@ -252,13 +252,13 @@ run_check() {
       local RC=$?
       if [ $RC -ne 0 ]; then
         STATUS="FAILED"
-        sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/' "$RAW_OUT" >> "$HTML_FILE"
+        sed 's/&/\\&amp;/g; s/</\\&lt;/g; s/>/\\&gt;/' "$RAW_OUT" >> "$HTML_FILE"
         echo "</pre>" >> "$HTML_FILE"
         echo "<p><em>Exit code: ${RC}</em></p>" >> "$HTML_FILE"
         echo "<p>[<a href=\"#top\">Back to Top</a> | <a href=\"../index.html\">Back to Index</a>]</p>" >> "$HTML_FILE"
       else
         STATUS="OK"
-        sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/' "$RAW_OUT" >> "$HTML_FILE"
+        sed 's/&/\\&amp;/g; s/</\\&lt;/g; s/>/\\&gt;/' "$RAW_OUT" >> "$HTML_FILE"
         echo "</pre>" >> "$HTML_FILE"
         echo "<p>[<a href=\"#top\">Back to Top</a> | <a href=\"../index.html\">Back to Index</a>]</p>" >> "$HTML_FILE"
       fi
@@ -268,9 +268,9 @@ run_check() {
   # Append a CSV row
   printf "\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"\n" \
     "$SECTION" \
-    "$(printf '%s' "$TECH_DESC" | sed 's/"/""/g')" \
+    "$(printf '%s' "$TECH_DESC" | sed 's/\"/\"\"/g')" \
     "$TTP" \
-    "$(printf '%s' "$CMD" | sed 's/"/""/g')" \
+    "$(printf '%s' "$CMD" | sed 's/\"/\"\"/g')" \
     "$STATUS" \
     >> "$CSV_TMP"
 
@@ -280,7 +280,7 @@ run_check() {
 
 ###############################################################################
 ###  DEFINE ALL CHECK-LISTS (PIPE-SEPARATED: TECH_DESC|TTP|CMD_RAW)
-###  Use single‐quoted heredocs so that pipes, redirections and comments remain literal.
+###  Use single-quoted heredocs so that pipes, redirections and comments remain literal.
 ###  Use __ROOTDIR__ placeholder for paths under $ROOT_DIR.
 ###############################################################################
 read -r -d '' kernel_checks <<'EOF'
@@ -398,8 +398,8 @@ run_section() {
 
   SECTION_TITLE="$(display_title "$SECTION")"
   DIR_NAME="$(section_dir "$SECTION")"
-  SECTION_DIR="${ROOT_DIR}/${DIR_NAME}"
-  HTML_FILE="${SECTION_DIR}/index.html"
+  SECTION_DIR="$ROOT_DIR/${DIR_NAME}"
+  HTML_FILE="$SECTION_DIR/index.html"
 
   if ! mkdir -p "${SECTION_DIR}"; then
     echo "ERROR: Could not create directory '${SECTION_DIR}'." >&2
@@ -438,7 +438,7 @@ EOF
   while IFS='|' read -r TECH_DESC TTP CMD_RAW; do
     idx=$((idx + 1))
     SAFE_DESC="$(printf '%s' "$TECH_DESC" | sed 's/[^a-zA-Z0-9]/_/g')"
-    RAW_OUT="${SECTION_DIR}/$(printf '%02d' "$idx")_${SAFE_DESC}.txt"
+    RAW_OUT="$SECTION_DIR/$(printf '%02d' "$idx")_${SAFE_DESC}.txt"
 
     CHECK_IDX="$idx"
     run_check "$SECTION" "$TECH_DESC" "$TTP" "$CMD_RAW" "$RAW_OUT"
@@ -455,7 +455,7 @@ EOF
 ###############################################################################
 generate_master_index() {
   local INDEX_FILE SYSTEM_INFO_RAW SYSTEM_INFO TOTAL_OVERALL SKIPPED_OVERALL FAILED_OVERALL SUCCESS_OVERALL
-  INDEX_FILE="${ROOT_DIR}/index.html"
+  INDEX_FILE="$ROOT_DIR/index.html"
 
   # Overall summary (across all sections)
   if [ -s "$CSV_TMP" ]; then
@@ -467,8 +467,8 @@ generate_master_index() {
     TOTAL_OVERALL=0; SKIPPED_OVERALL=0; FAILED_OVERALL=0; SUCCESS_OVERALL=0
   fi
 
-  SYSTEM_INFO_RAW="$(cat "${ROOT_DIR}/system_info.txt" 2>/dev/null)"
-  SYSTEM_INFO="$(printf '%s' "$SYSTEM_INFO_RAW" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')"
+  SYSTEM_INFO_RAW="$(cat "$ROOT_DIR/system_info.txt" 2>/dev/null)"
+  SYSTEM_INFO="$(printf '%s' "$SYSTEM_INFO_RAW" | sed 's/&/\\&amp;/g; s/</\\&lt;/g; s/>/\\&gt;/g')"
 
   cat <<EOF > "$INDEX_FILE"
 <!DOCTYPE html>
@@ -523,7 +523,7 @@ EOF
     TITLE="$(display_title "$SEC")"
     DIR_NAME="$(section_dir "$SEC")"
 
-    if [[ " $SECTIONS " == *" $SEC "* ]] && [ -d "${ROOT_DIR}/${DIR_NAME}" ] && [ -f "${ROOT_DIR}/${DIR_NAME}/index.html" ]; then
+    if [[ " $SECTIONS " == *" $SEC "* ]] && [ -d "$ROOT_DIR/${DIR_NAME}" ] && [ -f "$ROOT_DIR/${DIR_NAME}/index.html" ]; then
       SECTION_CSV=$(grep -E "^\"${SEC}\"" "$CSV_TMP")
       TOTAL_SECTION=$(echo "$SECTION_CSV" | wc -l)
       SKIPPED_SECTION=$(echo "$SECTION_CSV" | grep -c '"SKIPPED"')
@@ -547,7 +547,7 @@ EOF
 ###  EXECUTIVE REPORT GENERATION (WHEN --report IS SET)
 ###############################################################################
 generate_executive_report() {
-  local REPORT_FILE="${ROOT_DIR}/executive_summary.html"
+  local REPORT_FILE="$ROOT_DIR/executive_summary.html"
   local SUMMARY_TOTAL SUMMARY_OK SUMMARY_SKIPPED SUMMARY_FAILED
   local FAILED_LIST SKIPPED_LIST
 
@@ -611,7 +611,7 @@ EOF
     TITLE="$(display_title "$SEC")"
     DIR_NAME="$(section_dir "$SEC")"
 
-    if [[ " $SECTIONS " == *" $SEC "* ]] && [ -d "${ROOT_DIR}/${DIR_NAME}" ] && [ -f "${ROOT_DIR}/${DIR_NAME}/index.html" ]; then
+    if [[ " $SECTIONS " == *" $SEC "* ]] && [ -d "$ROOT_DIR/${DIR_NAME}" ] && [ -f "$ROOT_DIR/${DIR_NAME}/index.html" ]; then
       SECTION_CSV=$(grep -E "^\"${SEC}\"" "$CSV_TMP")
       TOTAL_SECTION=$(echo "$SECTION_CSV" | wc -l)
       SKIPPED_SECTION=$(echo "$SECTION_CSV" | grep -c '"SKIPPED"')
@@ -626,13 +626,13 @@ EOF
   cat <<EOF >> "$REPORT_FILE"
   </table>
 
-  <h2>Section‐Specific Findings</h2>
+  <h2>Section-Specific Findings</h2>
 EOF
 
   # Proc section findings:
   if [[ " $SECTIONS " == *" proc "* ]]; then
-    local PROC_DIR="${ROOT_DIR}/02_proc_artifacts"
-    local PR_FIND DB_COUNT OF_COUNT TCP_COUNT
+    local PROC_DIR="$ROOT_DIR/02_proc_artifacts"
+    local PR_FIND OF_COUNT TCP_COUNT
     PR_FIND=$(grep -v '^$' "${PROC_DIR}/01_Processes_running_deleted_binaries.txt" | grep -v "SKIPPED" | wc -l)
     OF_COUNT=$(grep -v '^$' "${PROC_DIR}/02_List_open_files.txt" | grep -v "SKIPPED" | wc -l)
     TCP_COUNT=$(grep -v '^$' "${PROC_DIR}/03_Active_TCP_connections.txt" | grep -v "SKIPPED" | wc -l)
@@ -640,9 +640,9 @@ EOF
     echo "  <h3>/proc &amp; Process Artifacts</h3>" >> "$REPORT_FILE"
     echo "  <ul>" >> "$REPORT_FILE"
     if [ "$PR_FIND" -gt 0 ]; then
-      echo "    <li>Deleted‐binary processes found: ${PR_FIND}</li>" >> "$REPORT_FILE"
+      echo "    <li>Deleted-binary processes found: ${PR_FIND}</li>" >> "$REPORT_FILE"
     else
-      echo "    <li>No deleted‐binary processes detected</li>" >> "$REPORT_FILE"
+      echo "    <li>No deleted-binary processes detected</li>" >> "$REPORT_FILE"
     fi
     if [ "$OF_COUNT" -gt 0 ]; then
       echo "    <li>Open files detected: ${OF_COUNT}</li>" >> "$REPORT_FILE"
@@ -659,7 +659,7 @@ EOF
 
   # FS section findings:
   if [[ " $SECTIONS " == *" fs "* ]]; then
-    local FS_DIR="${ROOT_DIR}/03_filesystem_checks"
+    local FS_DIR="$ROOT_DIR/03_filesystem_checks"
     local SUID_COUNT MOD_COUNT
     SUID_COUNT=$(grep -v '^$' "${FS_DIR}/01_SUID_SGID_files.txt" | grep -v "SKIPPED" | wc -l)
     MOD_COUNT=$(grep -v '^$' "${FS_DIR}/02_Recently_modified_files_last_24h.txt" | grep -v "SKIPPED" | wc -l)
@@ -681,7 +681,7 @@ EOF
 
   # Network section findings:
   if [[ " $SECTIONS " == *" network "* ]]; then
-    local NET_DIR="${ROOT_DIR}/04_network_checks"
+    local NET_DIR="$ROOT_DIR/04_network_checks"
     local SOCK_COUNT FW_COUNT SS_COUNT
     SOCK_COUNT=$(grep -v '^$' "${NET_DIR}/01_Open_listening_sockets.txt" | grep -v "SKIPPED" | wc -l)
     FW_COUNT=$(grep -v '^$' "${NET_DIR}/02_Firewall_rules.txt" | grep -v "SKIPPED" | wc -l)
@@ -709,9 +709,8 @@ EOF
 
   # Kernel section findings:
   if [[ " $SECTIONS " == *" kernel "* ]]; then
-    local KERNEL_DIR="${ROOT_DIR}/01_kernel_modules"
-    local LSMD_COUNT HIDDEN_COUNT EBP_COUNT
-    LSMD_COUNT=$(grep -v '^$' "${KERNEL_DIR}/01_List_loaded_kernel_modules.txt" | grep -v "SKIPPED" | wc -l)
+    local KERNEL_DIR="$ROOT_DIR/01_kernel_modules"
+    local HIDDEN_COUNT EBP_COUNT
     HIDDEN_COUNT=$(grep -v '^$' "${KERNEL_DIR}/04_Detect_hidden_malicious_modules.txt" | grep -v "SKIPPED" | wc -l)
     EBP_COUNT=$(grep -v '^$' "${KERNEL_DIR}/05_Check_for_eBPF_tracing_hooks.txt" | grep -v "SKIPPED" | wc -l)
 
@@ -729,8 +728,6 @@ EOF
     fi
     echo "  </ul>" >> "$REPORT_FILE"
   fi
-
-  # You can add similar per‐section blocks for users, logs, etc., if desired.
 
   cat <<EOF >> "$REPORT_FILE"
   <h2>Notable Failures</h2>
@@ -824,14 +821,14 @@ fi
 ###  GENERATE FINAL EXPORTS (JSON, CSV, TAR, ZIP)
 ###############################################################################
 if [ "$EXPORT_CSV" -eq 1 ]; then
-  CSV_FILE="${ROOT_DIR}/report_summary.csv"
+  CSV_FILE="$ROOT_DIR/report_summary.csv"
   echo "\"Section\",\"Technique\",\"TTP\",\"Command\",\"Status\"" > "$CSV_FILE"
   cat "$CSV_TMP" >> "$CSV_FILE"
   echo "Created CSV summary: ${CSV_FILE}"
 fi
 
 if [ "$EXPORT_JSON" -eq 1 ]; then
-  JSON_FILE="${ROOT_DIR}/report_summary.json"
+  JSON_FILE="$ROOT_DIR/report_summary.json"
   {
     echo "["
     sed '$s/,$//' "$JSON_TMP"
